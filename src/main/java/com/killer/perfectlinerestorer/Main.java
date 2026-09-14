@@ -24,7 +24,8 @@ public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
     
     private static final String PROGRAM_NAME = "ClassLinefix";
-    private static final String VERSION = "1.0.0";
+    private static final String VERSION = Main.class.getPackage().getImplementationVersion() != null
+            ? Main.class.getPackage().getImplementationVersion() : "1.0.0";
     
     public static void main(String[] args) {
         try {
@@ -57,7 +58,7 @@ public class Main {
     /**
      * Parse command line arguments
      */
-    private static CommandLineConfig parseCommandLine(String[] args) {
+    static CommandLineConfig parseCommandLine(String[] args) {
         Options options = createOptions();
         CommandLineParser parser = new DefaultParser();
         
@@ -80,21 +81,12 @@ public class Main {
             String inputDir = cmd.getOptionValue("i");
             String outputDir = cmd.getOptionValue("o");
             
-            // Parse package exclusions if provided
-            Set<String> excludePackages = new HashSet<>();
-            if (cmd.hasOption("p")) {
-                String packageList = cmd.getOptionValue("p");
-                if (packageList != null && !packageList.trim().isEmpty()) {
-                    String[] packages = packageList.split(",");
-                    for (String pkg : packages) {
-                        String trimmed = pkg.trim();
-                        if (!trimmed.isEmpty()) {
-                            excludePackages.add(trimmed);
-                        }
-                    }
-                }
+            Set<String> excludePackages = parsePackageList(cmd.getOptionValue("p"));
+            Set<String> whitelistPackages = parsePackageList(cmd.getOptionValue("w"));
+            if (cmd.hasOption("w") && whitelistPackages.isEmpty()) {
+                throw new ParseException("Whitelist (-w) must contain at least one package or class name");
             }
-            
+
             // Parse skip inner classes option (default is false)
             boolean skipInnerClasses = false;
             if (cmd.hasOption("s")) {
@@ -104,7 +96,7 @@ public class Main {
                 }
             }
             
-            return new CommandLineConfig(inputDir, outputDir, excludePackages, skipInnerClasses);
+            return new CommandLineConfig(inputDir, outputDir, excludePackages, whitelistPackages, skipInnerClasses);
             
         } catch (ParseException e) {
             System.err.println("Error parsing command line: " + e.getMessage());
@@ -113,6 +105,19 @@ public class Main {
         }
     }
     
+    private static Set<String> parsePackageList(String value) {
+        Set<String> packages = new HashSet<>();
+        if (value != null) {
+            for (String entry : value.split(",")) {
+                String trimmed = entry.trim();
+                if (!trimmed.isEmpty()) {
+                    packages.add(trimmed);
+                }
+            }
+        }
+        return packages;
+    }
+
     /**
      * Create command line options
      */
@@ -148,6 +153,13 @@ public class Main {
                 .required(false)
                 .build());
         
+        options.addOption(Option.builder("w")
+                .longOpt("whitelist")
+                .hasArg()
+                .argName("package1,package2,...")
+                .desc("Only process matching packages or full class names (same matching rules as -p; exclusions take precedence)")
+                .build());
+
         options.addOption(Option.builder("s")
                 .longOpt("skip-inner")
                 .hasArg()
@@ -256,6 +268,7 @@ public class Main {
         private final String inputDir;
         private final String outputDir;
         private final Set<String> excludePackages;
+        private final Set<String> whitelistPackages;
         private final boolean skipInnerClasses;
         
         public CommandLineConfig(String inputDir, String outputDir) {
@@ -267,9 +280,15 @@ public class Main {
         }
         
         public CommandLineConfig(String inputDir, String outputDir, Set<String> excludePackages, boolean skipInnerClasses) {
+            this(inputDir, outputDir, excludePackages, null, skipInnerClasses);
+        }
+
+        public CommandLineConfig(String inputDir, String outputDir, Set<String> excludePackages,
+                                 Set<String> whitelistPackages, boolean skipInnerClasses) {
             this.inputDir = inputDir;
             this.outputDir = outputDir;
             this.excludePackages = excludePackages != null ? new HashSet<>(excludePackages) : new HashSet<>();
+            this.whitelistPackages = whitelistPackages != null ? new HashSet<>(whitelistPackages) : new HashSet<>();
             this.skipInnerClasses = skipInnerClasses;
         }
         
@@ -289,30 +308,35 @@ public class Main {
             return skipInnerClasses;
         }
         
+        public Set<String> getWhitelistPackages() {
+            return new HashSet<>(whitelistPackages);
+        }
+
         public boolean shouldExcludePackage(String className) {
-            if (className == null || excludePackages.isEmpty()) {
+            return matchesPackagePattern(className, excludePackages);
+        }
+
+        public boolean shouldProcessClass(String className) {
+            return className != null
+                    && (whitelistPackages.isEmpty() || matchesPackagePattern(className, whitelistPackages))
+                    && !shouldExcludePackage(className);
+        }
+
+        // Keep whitelist and -p semantics identical, including the existing package-name heuristic.
+        private boolean matchesPackagePattern(String className, Set<String> patterns) {
+            if (className == null || patterns.isEmpty()) {
                 return false;
             }
-            
-            // Convert class name to package name format
-            String packageName = className.replace('/', '.');
-            
-            // Check if any excluded package matches
-            for (String excludePackage : excludePackages) {
-                // Exact class name match
-                if (packageName.equals(excludePackage)) {
-                    return true;
-                }
-                // Package prefix match (only if excludePackage doesn't contain a class name)
-                // A package name typically doesn't contain uppercase letters at the start of segments
-                if (isPackageName(excludePackage) && packageName.startsWith(excludePackage + ".")) {
+            String dottedName = className.replace('/', '.');
+            for (String pattern : patterns) {
+                if (dottedName.equals(pattern)
+                        || (isPackageName(pattern) && dottedName.startsWith(pattern + "."))) {
                     return true;
                 }
             }
-            
             return false;
         }
-        
+
         /**
          * Check if the given string is likely a package name rather than a full class name
          * This is a heuristic: package names typically use lowercase, class names start with uppercase
@@ -336,8 +360,8 @@ public class Main {
         
         @Override
         public String toString() {
-            return String.format("CommandLineConfig{inputDir='%s', outputDir='%s', excludePackages=%s, skipInnerClasses=%s}", 
-                    inputDir, outputDir, excludePackages, skipInnerClasses);
+            return String.format("CommandLineConfig{inputDir='%s', outputDir='%s', excludePackages=%s, whitelistPackages=%s, skipInnerClasses=%s}",
+                    inputDir, outputDir, excludePackages, whitelistPackages, skipInnerClasses);
         }
     }
 }

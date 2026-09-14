@@ -27,6 +27,7 @@ usage: java -jar ClassLinefix.jar
   -i,--input <directory>         包含JAR和CLASS文件的输入目录
   -o,--output <directory>        处理后文件的输出目录
   -p,--packages <package1,package2,...>  排除指定包名或类名的处理（逗号分隔）
+  -w,--whitelist <package1,package2,...>  仅处理指定包名或类名（与 -p 匹配规则一致）
   -s,--skip-inner <true|false>   跳过内部类和包含内部类的类（默认：false）
 ```
 
@@ -50,6 +51,15 @@ java -jar ClassLinefix.jar -i ./input-jars -o ./output-jars -s true
 java -jar ClassLinefix.jar -i ./input-jars -o ./output-jars -p "com.example.exclude,org.test"
 ```
 
+#### 只处理白名单中的包或类
+```bash
+# 只处理 com.api.doc 包及其子包
+java -jar ClassLinefix.jar -i ./input -o ./output -w "com.api.doc"
+
+# 多个包/类；同时命中 -p 时，排除规则优先
+java -jar ClassLinefix.jar -i ./input -o ./output --whitelist "com.api.doc,weaver.hrm.User" -p "com.api.doc.internal"
+```
+
 #### 复合选项使用
 ```bash
 # 跳过内部类且排除特定包
@@ -71,6 +81,14 @@ java -jar ClassLinefix.jar -i ./input-jars -o ./output-jars -s true -p "com.obfu
   - 包名前缀: `com.example`（会排除该包下所有类）
 - **使用场景**: 排除已知有问题的包或不需要调试的第三方库
 
+### 包白名单 (`-w` / `--whitelist`)
+- **默认行为**: 不传此参数时不限制处理范围，保持原有行为；显式传入空列表会报错。
+- **格式**: 逗号分隔，去掉每项首尾空白、忽略空项并去重，与 `-p` 一致。
+- **匹配规则**: 与 `-p` 共用同一实现。完整类名精确匹配；最后一段以小写字母开头的条目按包名处理，以 `包名.` 为边界匹配该包及子包。匹配区分大小写，不支持通配符，参数使用点分名称。
+- **边界示例**: `com.example` 不匹配 `com.examples.Foo`；`com.example.Foo` 不自动匹配 `com.example.Foo$Inner`。
+- **优先级**: 先满足白名单，再应用 `-p` 排除；`-s` 和已有行号跳过规则继续生效。
+- **输出**: 白名单外或被排除的独立 CLASS 文件、JAR 内的 CLASS 条目均保留原始字节，不会删除；过滤依据字节码中的类名，文件路径不影响匹配。JAR 的签名清理仍遵循原有逻辑。
+
 ### 输入输出目录
 - **输入目录** (`--input`): 包含JAR和CLASS文件的源目录
 - **输出目录** (`--output`): 处理后文件的目标目录
@@ -82,7 +100,7 @@ java -jar ClassLinefix.jar -i ./input-jars -o ./output-jars -s true -p "com.obfu
 1. **扫描输入目录**: 递归查找所有JAR和CLASS文件
 2. **文件分析**: 检查每个文件是否已包含行号信息
 3. **内部类检测**: 根据配置决定是否跳过内部类和包含内部类的文件
-4. **包过滤**: 检查文件是否在排除包列表中
+4. **包过滤**: 检查是否匹配白名单（如指定），再应用排除包列表
 5. **策略选择**: 根据文件特征自动选择最适合的恢复策略
 6. **行号恢复**: 应用选定的策略添加行号信息
 7. **结构保持**: 在输出目录中重建相同的目录结构
@@ -138,3 +156,20 @@ java -jar ClassLinefix-1.0.0.jar -i lib2 -o lib -p com.fr.license.function,com.f
 
 ![](images/b84b8c55-1b28-40b3-a928-48a52b4b225e.png)
 使用恢复行号后的jar运行程序，然后将恢复行号的lib加入idea依赖可以看到成功断点
+
+
+## 构建与自动发布
+
+本地使用 JDK 8 或更高版本、Maven 3 构建：
+
+```bash
+mvn clean verify
+java -jar target/ClassLinefix-1.0.0.jar --help
+```
+
+- **CI**：推送到 `master` 或向 `master` 提交 PR 时，在 Java 8 和 Java 17 上运行测试、打包和 JAR 启动检查。
+- **发布**：进入仓库 **Actions → Release → Run workflow**，选择 `master`，在 `tag` 中输入如 `v1.1.0`，手动触发。
+- 工作流只接受 `vX.Y.Z`（数字无前导零），拒绝已存在的 tag 或 Release。测试通过后，为本次运行的提交创建 tag 并发布 Release，附带可直接运行的 `ClassLinefix-X.Y.Z.jar` 和 SHA-256 校验文件。
+- Maven 构建版本及 JAR 显示版本使用输入 tag（去掉 `v`）；版本变更仅用于本次构建，不自动提交回 `master`。普通 push 不会发布 Release。
+- 使用内置 `GITHUB_TOKEN` 的 `contents: write` 权限，无需额外配置发布密钥。Fork 仓库如提示 Actions 未启用，先在 Actions 页面启用工作流。
+- 发布先创建带附件的草稿，再公开；若发布中断留下同版本草稿或 tag，请核对后清理该失败版本或改用新 tag，不会自动覆盖已有版本。

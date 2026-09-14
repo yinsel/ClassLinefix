@@ -104,6 +104,9 @@
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.killer.perfectlinerestorer.Main</mainClass>
+                                    <manifestEntries>
+                                        <Implementation-Version>${project.version}</Implementation-Version>
+                                    </manifestEntries>
                                 </transformer>
                             </transformers>
                         </configuration>

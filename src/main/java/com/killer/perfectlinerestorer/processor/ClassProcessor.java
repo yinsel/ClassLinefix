@@ -53,11 +53,11 @@ public class ClassProcessor implements FileProcessor {
     }
     
     /**
-     * Process a CLASS file with package exclusion support
+     * Process a CLASS file with package filtering support
      * 
      * @param inputClass input CLASS file path
      * @param outputClass output CLASS file path
-     * @param config command line configuration containing package exclusions
+     * @param config command line configuration containing package filters
      * @return true if the file was modified, false otherwise
      * @throws IOException if an I/O error occurs
      */
@@ -70,7 +70,7 @@ public class ClassProcessor implements FileProcessor {
             
             // Check if this class should be excluded from processing
             if (config != null && shouldExcludeClass(originalBytes, config)) {
-                logger.debug("Class {} is in excluded package, copying as-is", inputClass.getFileName());
+                logger.debug("Class {} does not pass package filters, copying as-is", inputClass.getFileName());
                 
                 // Ensure output directory exists
                 Files.createDirectories(outputClass.getParent());
@@ -155,10 +155,10 @@ public class ClassProcessor implements FileProcessor {
         try {
             ClassReader classReader = new ClassReader(classBytes);
             String className = classReader.getClassName();
-            return config.shouldExcludePackage(className);
+            return !config.shouldProcessClass(className);
         } catch (Exception e) {
-            logger.debug("Failed to read class name for exclusion check: {}", e.getMessage());
-            return false; // If we can't read the class name, don't exclude it
+            logger.debug("Failed to read class name for package filtering, copying as-is: {}", e.getMessage());
+            return true; // An unreadable class cannot be matched safely
         }
     }
     

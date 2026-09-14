@@ -56,11 +56,11 @@ public class JarProcessor implements FileProcessor {
     }
     
     /**
-     * Process a JAR file with package exclusion support
+     * Process a JAR file with package filtering support
      * 
      * @param inputJar input JAR file path
      * @param outputJar output JAR file path
-     * @param config command line configuration containing package exclusions
+     * @param config command line configuration containing package filters
      * @return true if any modifications were made, false otherwise
      * @throws IOException if an I/O error occurs
      */
@@ -133,7 +133,7 @@ public class JarProcessor implements FileProcessor {
                         boolean modified = false;
                         
                         if (shouldExclude) {
-                            logger.debug("Class {} is in excluded package, copying as-is", entryName);
+                            logger.debug("Class {} does not pass package filters, copying as-is", entryName);
                             processedBytes = entryBytes; // Use original bytes
                         } else {
                             processedBytes = restorer.restoreLineNumbers(entryBytes);
@@ -223,7 +223,7 @@ public class JarProcessor implements FileProcessor {
                         boolean modified = false;
                         
                         if (shouldExclude) {
-                            logger.debug("Class {} is in excluded package, copying as-is", entryName);
+                            logger.debug("Class {} does not pass package filters, copying as-is", entryName);
                             processedBytes = entryBytes; // Use original bytes
                         } else {
                             processedBytes = restorer.restoreLineNumbers(entryBytes);
@@ -291,10 +291,10 @@ public class JarProcessor implements FileProcessor {
         try {
             ClassReader reader = new ClassReader(classBytes);
             String className = reader.getClassName();
-            return config.shouldExcludePackage(className);
+            return !config.shouldProcessClass(className);
         } catch (Exception e) {
-            logger.warn("Failed to read class name from bytes, will not exclude: {}", e.getMessage());
-            return false;
+            logger.warn("Failed to read class name for package filtering, copying as-is: {}", e.getMessage());
+            return true;
         }
     }
     
