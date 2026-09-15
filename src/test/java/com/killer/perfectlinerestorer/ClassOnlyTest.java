@@ -26,7 +26,7 @@ class ClassOnlyTest {
     @ValueSource(strings = {"-c", "--class-only"})
     void processesStandaloneClassesAndPreservesWholeArchives(String flag) throws Exception {
         Path input = Files.createDirectory(temp.resolve("input"));
-        Path output = temp.resolve("output");
+        Path output = temp.resolve("input-out");
         Path lib = Files.createDirectory(input.resolve("lib"));
         byte[] selected = classBytes("com/example/Selected");
         byte[] excluded = classBytes("com/example/internal/Excluded");
@@ -37,28 +37,31 @@ class ClassOnlyTest {
         Files.write(input.resolve("Excluded.class"), excluded);
         Files.write(input.resolve("Outside.class"), outside);
         Files.write(lib.resolve("library.JAR"), archive);
-        // Even an unreadable archive must be copied without being opened.
+        // Even an unreadable archive must be skipped without being opened.
         Files.write(lib.resolve("invalid.jar"), resource);
         Files.write(input.resolve("config.txt"), resource);
         Main.CommandLineConfig config = Main.parseCommandLine(new String[]{
-                "-i", input.toString(), "-o", output.toString(), flag,
+                "-i", input.toString(), flag,
                 "-w", "com.example", "-p", "com.example.internal", "-s", "true"});
         assertNotNull(config);
         assertTrue(config.isClassOnly());
         assertTrue(config.isSkipInnerClasses());
         new PerfectLineRestorer(config).process();
         assertTrue(new LineNumberRestorer().hasLineNumbers(Files.readAllBytes(output.resolve("Selected.class"))));
-        assertArrayEquals(excluded, Files.readAllBytes(output.resolve("Excluded.class")));
-        assertArrayEquals(outside, Files.readAllBytes(output.resolve("Outside.class")));
-        assertArrayEquals(archive, Files.readAllBytes(output.resolve("lib/library.JAR")));
-        assertArrayEquals(resource, Files.readAllBytes(output.resolve("lib/invalid.jar")));
-        assertArrayEquals(resource, Files.readAllBytes(output.resolve("config.txt")));
+        assertArrayEquals(excluded, Files.readAllBytes(input.resolve("Excluded.class")));
+        assertArrayEquals(outside, Files.readAllBytes(input.resolve("Outside.class")));
+        assertArrayEquals(archive, Files.readAllBytes(input.resolve("lib/library.JAR")));
+        assertArrayEquals(resource, Files.readAllBytes(input.resolve("lib/invalid.jar")));
+        assertArrayEquals(resource, Files.readAllBytes(input.resolve("config.txt")));
+        assertFalse(Files.exists(output.resolve("lib/library.JAR")));
+        assertFalse(Files.exists(temp.resolve("input-bak/lib/library.JAR")));
+        assertArrayEquals(selected, Files.readAllBytes(temp.resolve("input-bak/Selected.class")));
     }
 
     @Test
     void singleJarInputOverwritesExistingOutputWithoutProcessing() throws Exception {
         Path input = temp.resolve("input.jar");
-        Path output = temp.resolve("output.jar");
+        Path output = temp.resolve("input-fix.jar");
         byte[] archive = jarBytes(classBytes("com/example/Selected"));
         Files.write(input, archive);
         // Same size and newer timestamp must not retain a previously modified output.
@@ -67,7 +70,7 @@ class ClassOnlyTest {
         Files.write(output, changed);
         Files.setLastModifiedTime(output, FileTime.fromMillis(Files.getLastModifiedTime(input).toMillis() + 10000));
         Main.CommandLineConfig config = Main.parseCommandLine(new String[]{
-                "-i", input.toString(), "-o", output.toString(), "--class-only"});
+                "-i", input.toString(), "--class-only"});
         new PerfectLineRestorer(config).process();
         assertArrayEquals(archive, Files.readAllBytes(output));
     }
@@ -75,13 +78,13 @@ class ClassOnlyTest {
     @Test
     void defaultStillProcessesJars() throws Exception {
         Path input = temp.resolve("input.jar");
-        Path output = temp.resolve("output.jar");
+        Path output = temp.resolve("input-fix.jar");
         byte[] archive = jarBytes(classBytes("com/example/Selected"));
         Files.write(input, archive);
         Main.CommandLineConfig config = Main.parseCommandLine(new String[]{
-                "-i", input.toString(), "-o", output.toString()});
+                "-i", input.toString()});
         assertFalse(config.isClassOnly());
-        assertFalse(new Main.CommandLineConfig("in", "out").isClassOnly());
+        assertFalse(new Main.CommandLineConfig("in").isClassOnly());
         new PerfectLineRestorer(config).process();
         assertFalse(java.util.Arrays.equals(archive, Files.readAllBytes(output)));
     }

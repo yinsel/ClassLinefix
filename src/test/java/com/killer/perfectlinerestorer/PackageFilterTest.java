@@ -28,9 +28,9 @@ class PackageFilterTest {
     })
     void whitelistAndExclusionsUseIdenticalMatching(String pattern, String name, boolean matches) {
         Main.CommandLineConfig config = Main.parseCommandLine(new String[]{
-                "-i", "input", "-o", "output", "-w", pattern});
+                "-i", "input", "-w", pattern});
         Main.CommandLineConfig excluded = Main.parseCommandLine(new String[]{
-                "-i", "input", "-o", "output", "-p", pattern});
+                "-i", "input", "-p", pattern});
         assertNotNull(config);
         assertEquals(matches, config.shouldProcessClass(name));
         assertEquals(matches, excluded.shouldExcludePackage(name));
@@ -40,7 +40,7 @@ class PackageFilterTest {
     @ValueSource(strings = {"-w", "--whitelist"})
     void parsesListsAndGivesExclusionsPrecedence(String option) {
         Main.CommandLineConfig config = Main.parseCommandLine(new String[]{
-                "-i", "input", "-o", "output", option,
+                "-i", "input", option,
                 " com.example , org.other.One, ,com.example ", "-p", " com.example.internal , ", "-s", "true"});
         assertNotNull(config);
         assertEquals(new HashSet<>(Arrays.asList("com.example", "org.other.One")), config.getWhitelistPackages());
@@ -56,17 +56,17 @@ class PackageFilterTest {
     @Test
     void omittingWhitelistPreservesExistingBehaviorAndConstructors() {
         Main.CommandLineConfig config = Main.parseCommandLine(new String[]{
-                "-i", "input", "-o", "output", "-p", "org.thirdparty"});
+                "-i", "input", "-p", "org.thirdparty"});
         assertNotNull(config);
         assertTrue(config.shouldProcessClass("com.example.Foo"));
         assertFalse(config.shouldProcessClass("org.thirdparty.Foo"));
-        assertTrue(new Main.CommandLineConfig("in", "out").shouldProcessClass("anything.Foo"));
-        assertFalse(new Main.CommandLineConfig("in", "out", config.getExcludePackages(), false)
+        assertTrue(new Main.CommandLineConfig("in").shouldProcessClass("anything.Foo"));
+        assertFalse(new Main.CommandLineConfig("in", config.getExcludePackages(), null, false, false, false, false)
                 .shouldProcessClass("org.thirdparty.Foo"));
     }
 
     @Test
     void rejectsEmptyExplicitWhitelist() {
-        assertNull(Main.parseCommandLine(new String[]{"-i", "input", "-o", "output", "-w", " , , "}));
+        assertNull(Main.parseCommandLine(new String[]{"-i", "input", "-w", " , , "}));
     }
 }

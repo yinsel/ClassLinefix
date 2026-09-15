@@ -27,8 +27,8 @@ class DebugInfoRestorerTest {
     Path temp;
 
     private LineNumberRestorer restorer() {
-        return new LineNumberRestorer(new Main.CommandLineConfig("in", "out", null, null,
-                false, false, false, true));
+        return new LineNumberRestorer(new Main.CommandLineConfig("in", null, null,
+                false, false, true, false));
     }
 
     private byte[] compile(String debug, boolean parameters) throws Exception {
@@ -101,8 +101,8 @@ class DebugInfoRestorerTest {
     @Test
     void rebuildingExistingLinesIsExplicitAndRepeatable() throws Exception {
         byte[] original = compile("-g:source,lines", false);
-        LineNumberRestorer rebuild = new LineNumberRestorer(new Main.CommandLineConfig("in", "out", null, null,
-                false, false, false, false, true));
+        LineNumberRestorer rebuild = new LineNumberRestorer(new Main.CommandLineConfig("in", null, null,
+                false, false, false, true));
         byte[] result = rebuild.restoreLineNumbers(original);
         assertEquals(3, lines(method(read(result), "calculate")).size());
         assertEquals(withoutDebug(original), withoutDebug(result));
@@ -237,16 +237,16 @@ class DebugInfoRestorerTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"-d", "--debug-info"})
-    void cliRepairsLinedClassesAndModifiedOnlySkipsSecondPass(String flag) throws Exception {
+    void cliRepairsLinedClassesAndSkipsSecondPass(String flag) throws Exception {
         byte[] original = compile("-g:source,lines", false);
         Path input = Files.createDirectory(temp.resolve("input"));
-        Path output = temp.resolve("output");
+        Path output = temp.resolve("input-out");
         Files.write(input.resolve("Subject.class"), original);
-        Main.main(new String[]{"-i", input.toString(), "-o", output.toString(), "-c", "-m", flag});
+        Main.main(new String[]{"-i", input.toString(), "-c", flag});
         byte[] result = Files.readAllBytes(output.resolve("Subject.class"));
         assertFalse(method(read(result), "calculate").localVariables.isEmpty());
-        Path second = temp.resolve("second");
-        Main.main(new String[]{"-i", output.toString(), "-o", second.toString(), "-c", "-m", flag});
+        Path second = temp.resolve("input-out-out");
+        Main.main(new String[]{"-i", output.toString(), "-c", flag});
         assertFalse(Files.exists(second.resolve("Subject.class")));
     }
 

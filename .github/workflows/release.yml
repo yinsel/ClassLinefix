@@ -28,8 +28,8 @@ jobs:
         env:
           RELEASE_REF: ${{ github.ref }}
         run: |
-          if [[ "$RELEASE_REF" != "refs/heads/master" ]]; then
-            echo '::error::Run this workflow from master.'
+          if [[ "$RELEASE_REF" != "refs/heads/master" && "$RELEASE_REF" != "refs/heads/main" ]]; then
+            echo '::error::Run this workflow from master or main.'
             exit 1
           fi
           if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then

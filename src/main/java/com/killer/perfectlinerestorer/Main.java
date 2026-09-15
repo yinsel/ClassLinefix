@@ -4,11 +4,11 @@ import org.apache.commons.cli.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -35,8 +35,8 @@ public class Main {
             }
             
             logger.info("Perfect Line Restorer v{} starting...", VERSION);
-            logger.info("Input directory: {}", config.getInputDir());
-            logger.info("Output directory: {}", config.getOutputDir());
+            logger.info("Input path: {}", config.getInputDir());
+            logger.info("Output path: {}", config.getOutputDir());
             
             // Validate input and output directories
             if (!validateDirectories(config)) {
@@ -72,14 +72,13 @@ public class Main {
             }
             
             // Validate required options
-            if (!cmd.hasOption("i") || !cmd.hasOption("o")) {
-                System.err.println("Error: Both input (-i) and output (-o) directories are required.");
+            if (!cmd.hasOption("i")) {
+                System.err.println("Error: Input (-i) directory, CLASS or JAR file is required.");
                 showHelp(options);
                 return null;
             }
             
             String inputDir = cmd.getOptionValue("i");
-            String outputDir = cmd.getOptionValue("o");
             
             Set<String> excludePackages = parsePackageList(cmd.getOptionValue("p"));
             Set<String> whitelistPackages = parsePackageList(cmd.getOptionValue("w"));
@@ -96,8 +95,8 @@ public class Main {
                 }
             }
             
-            return new CommandLineConfig(inputDir, outputDir, excludePackages, whitelistPackages,
-                    skipInnerClasses, cmd.hasOption("class-only"), cmd.hasOption("modified-only"), cmd.hasOption("debug-info"), cmd.hasOption("rebuild-lines"));
+            return new CommandLineConfig(inputDir, excludePackages, whitelistPackages,
+                    skipInnerClasses, cmd.hasOption("class-only"), cmd.hasOption("debug-info"), cmd.hasOption("rebuild-lines"));
             
         } catch (ParseException e) {
             System.err.println("Error parsing command line: " + e.getMessage());
@@ -133,24 +132,17 @@ public class Main {
         options.addOption(Option.builder("i")
                 .longOpt("input")
                 .hasArg()
-                .argName("directory")
-                .desc("Input directory containing JAR and CLASS files")
+                .argName("path")
+                .desc("Input directory, CLASS file or JAR file")
                 .required(false) // We'll check this manually for better error messages
                 .build());
-        
-        options.addOption(Option.builder("o")
-                .longOpt("output")
-                .hasArg()
-                .argName("directory")
-                .desc("Output directory for processed files")
-                .required(false) // We'll check this manually for better error messages
-                .build());
+
         
         options.addOption(Option.builder("p")
                 .longOpt("packages")
                 .hasArg()
                 .argName("package1,package2,...")
-                .desc("Comma-separated list of package names or full class names to exclude from line number processing (classes matching these patterns will be copied directly)")
+                .desc("Comma-separated list of package names or full class names to exclude from line number processing")
                 .required(false)
                 .build());
         
@@ -171,14 +163,10 @@ public class Main {
                 .desc("Fill missing source/line/local-variable debug metadata; use synthetic variable names (default: off)")
                 .build());
 
-        options.addOption(Option.builder("m")
-                .longOpt("modified-only")
-                .desc("Only output files with modified CLASS bytecode; skip unchanged files and resources (no value required; default: off)")
-                .build());
 
         options.addOption(Option.builder("c")
                 .longOpt("class-only")
-                .desc("Only process standalone CLASS files; copy JAR files unchanged without opening them")
+                .desc("Only process standalone CLASS files; skip directory JARs, copy a single JAR unchanged")
                 .build());
 
         options.addOption(Option.builder("s")
@@ -206,155 +194,73 @@ public class Main {
             "java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar",
             "\nOptions:",
             options,
-            "\nExamples:\n"
-                    + "  java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar -i ./input -o ./output\n"
-                    + "  java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar -i ./input -o ./output --modified-only\n"
-                    + "  java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar -i ./input -o ./output -c -m -w com.api.doc\n"
-                    + "\n--modified-only (-m): output a complete JAR only when CLASS bytecode inside it changes.\n"
-                    + "Combined with --class-only (-c), omit all JARs. Existing skipped outputs are left untouched.\n",
+            "\nDirectory: back up changed files to <input>-bak, replace originals, copy results to <input>-out.\n"
+                    + "Backup/output directories must not already exist. Relative paths are preserved.\n"
+                    + "Single file: write <name>-fix.class or <name>-fix.jar beside the original.\n"
+                    + "\nExamples:\n"
+                    + "  java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar -i ./input\n"
+                    + "  java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar -i ./Example.class\n"
+                    + "  java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar -i ./app.jar -d\n"
+                    + "  java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar -i ./input -c -w com.api.doc\n",
             true
         );
     }
     
     /**
-     * Validate input and output paths (supports both directories and JAR files)
+     * Validate input paths (directories, CLASS and JAR files)
      */
     private static boolean validateDirectories(CommandLineConfig config) {
-        Path inputPath = Paths.get(config.getInputDir());
-        Path outputPath = Paths.get(config.getOutputDir());
-        
-        // Check if input path exists and is readable
-        if (!Files.exists(inputPath)) {
-            logger.error("Input path does not exist: {}", config.getInputDir());
+        Path input = Paths.get(config.getInputDir());
+        String name = input.toString().toLowerCase(Locale.ROOT);
+        if (!Files.isReadable(input) || (!Files.isDirectory(input)
+                && !(Files.isRegularFile(input) && (name.endsWith(".class") || name.endsWith(".jar"))))) {
+            logger.error("Input must be a readable directory, CLASS or JAR file: {}", input);
             return false;
         }
-        
-        // Input can be either a directory or a JAR file
-        if (!Files.isDirectory(inputPath) && !inputPath.toString().toLowerCase().endsWith(".jar")) {
-            logger.error("Input path must be either a directory or a JAR file: {}", config.getInputDir());
-            return false;
-        }
-        
-        if (!Files.isReadable(inputPath)) {
-            logger.error("Input path is not readable: {}", config.getInputDir());
-            return false;
-        }
-        
-        // Handle output path based on input type
-        try {
-            if (Files.isDirectory(inputPath)) {
-                // Input is directory, output should be directory
-                if (!Files.exists(outputPath)) {
-                    Files.createDirectories(outputPath);
-                    logger.info("Created output directory: {}", config.getOutputDir());
-                }
-                
-                if (!Files.isDirectory(outputPath)) {
-                    logger.error("Output path exists but is not a directory: {}", config.getOutputDir());
-                    return false;
-                }
-                
-                if (!Files.isWritable(outputPath)) {
-                    logger.error("Output directory is not writable: {}", config.getOutputDir());
-                    return false;
-                }
-            } else {
-                // Input is JAR file, output should be JAR file
-                if (!outputPath.toString().toLowerCase().endsWith(".jar")) {
-                    logger.error("When input is a JAR file, output must also be a JAR file: {}", config.getOutputDir());
-                    return false;
-                }
-                
-                // Create parent directory if it doesn't exist
-                Path parentDir = outputPath.getParent();
-                if (parentDir != null && !Files.exists(parentDir)) {
-                    Files.createDirectories(parentDir);
-                    logger.info("Created output parent directory: {}", parentDir);
-                }
-                
-                // Check if parent directory is writable
-                if (parentDir != null && !Files.isWritable(parentDir)) {
-                    logger.error("Output parent directory is not writable: {}", parentDir);
-                    return false;
-                }
-            }
-            
-        } catch (Exception e) {
-            logger.error("Failed to create or access output path: {}", e.getMessage());
-            return false;
-        }
-        
         return true;
     }
-    
+
     /**
      * Configuration class for command line options
      */
     public static class CommandLineConfig {
         private final String inputDir;
-        private final String outputDir;
         private final Set<String> excludePackages;
         private final Set<String> whitelistPackages;
         private final boolean skipInnerClasses;
         private final boolean classOnly;
-        private final boolean modifiedOnly;
         private final boolean debugInfo;
         private final boolean rebuildLines;
         
-        public CommandLineConfig(String inputDir, String outputDir) {
-            this(inputDir, outputDir, new HashSet<>(), false);
-        }
-        
-        public CommandLineConfig(String inputDir, String outputDir, Set<String> excludePackages) {
-            this(inputDir, outputDir, excludePackages, false);
-        }
-        
-        public CommandLineConfig(String inputDir, String outputDir, Set<String> excludePackages, boolean skipInnerClasses) {
-            this(inputDir, outputDir, excludePackages, null, skipInnerClasses);
+        public CommandLineConfig(String inputDir) {
+            this(inputDir, null, null, false, false, false, false);
         }
 
-        public CommandLineConfig(String inputDir, String outputDir, Set<String> excludePackages,
-                                 Set<String> whitelistPackages, boolean skipInnerClasses) {
-            this(inputDir, outputDir, excludePackages, whitelistPackages, skipInnerClasses, false);
-        }
-
-        public CommandLineConfig(String inputDir, String outputDir, Set<String> excludePackages,
-                                 Set<String> whitelistPackages, boolean skipInnerClasses, boolean classOnly) {
-            this(inputDir, outputDir, excludePackages, whitelistPackages, skipInnerClasses, classOnly, false);
-        }
-
-        public CommandLineConfig(String inputDir, String outputDir, Set<String> excludePackages,
-                                 Set<String> whitelistPackages, boolean skipInnerClasses, boolean classOnly,
-                                 boolean modifiedOnly) {
-            this(inputDir, outputDir, excludePackages, whitelistPackages, skipInnerClasses, classOnly, modifiedOnly, false);
-        }
-
-        public CommandLineConfig(String inputDir, String outputDir, Set<String> excludePackages,
-                                 Set<String> whitelistPackages, boolean skipInnerClasses, boolean classOnly,
-                                 boolean modifiedOnly, boolean debugInfo) {
-            this(inputDir, outputDir, excludePackages, whitelistPackages, skipInnerClasses, classOnly, modifiedOnly, debugInfo, false);
-        }
-
-        public CommandLineConfig(String inputDir, String outputDir, Set<String> excludePackages,
-                                 Set<String> whitelistPackages, boolean skipInnerClasses, boolean classOnly,
-                                 boolean modifiedOnly, boolean debugInfo, boolean rebuildLines) {
+        public CommandLineConfig(String inputDir, Set<String> excludePackages,
+                                 Set<String> whitelistPackages, boolean skipInnerClasses,
+                                 boolean classOnly, boolean debugInfo, boolean rebuildLines) {
             this.inputDir = inputDir;
-            this.outputDir = outputDir;
             this.excludePackages = excludePackages != null ? new HashSet<>(excludePackages) : new HashSet<>();
             this.whitelistPackages = whitelistPackages != null ? new HashSet<>(whitelistPackages) : new HashSet<>();
             this.skipInnerClasses = skipInnerClasses;
             this.classOnly = classOnly;
-            this.modifiedOnly = modifiedOnly;
             this.debugInfo = debugInfo || rebuildLines;
             this.rebuildLines = rebuildLines;
         }
-        
+
         public String getInputDir() {
             return inputDir;
         }
         
         public String getOutputDir() {
-            return outputDir;
+            Path input = Paths.get(inputDir).toAbsolutePath().normalize();
+            if (Files.isDirectory(input)) {
+                return sibling(input, "-out").toString();
+            }
+            String name = input.getFileName().toString();
+            int dot = name.lastIndexOf('.');
+            String output = dot > 0 ? name.substring(0, dot) + "-fix" + name.substring(dot) : name + "-fix";
+            return input.resolveSibling(output).toString();
         }
         
         public Set<String> getExcludePackages() {
@@ -369,8 +275,15 @@ public class Main {
             return classOnly;
         }
 
-        public boolean isModifiedOnly() {
-            return modifiedOnly;
+        public String getBackupDir() {
+            return sibling(Paths.get(inputDir).toAbsolutePath().normalize(), "-bak").toString();
+        }
+
+        private Path sibling(Path input, String suffix) {
+            if (input.getFileName() == null) {
+                throw new IllegalArgumentException("A filesystem root cannot be used as the input directory");
+            }
+            return input.resolveSibling(input.getFileName().toString() + suffix);
         }
 
         public boolean isRebuildLines() { return rebuildLines; }
@@ -431,8 +344,8 @@ public class Main {
         
         @Override
         public String toString() {
-            return String.format("CommandLineConfig{inputDir='%s', outputDir='%s', excludePackages=%s, whitelistPackages=%s, skipInnerClasses=%s, classOnly=%s, modifiedOnly=%s, debugInfo=%s}",
-                    inputDir, outputDir, excludePackages, whitelistPackages, skipInnerClasses, classOnly, modifiedOnly, debugInfo);
+            return String.format("CommandLineConfig{inputDir='%s', outputDir='%s', excludePackages=%s, whitelistPackages=%s, skipInnerClasses=%s, classOnly=%s, debugInfo=%s}",
+                    inputDir, getOutputDir(), excludePackages, whitelistPackages, skipInnerClasses, classOnly, debugInfo);
         }
     }
 }

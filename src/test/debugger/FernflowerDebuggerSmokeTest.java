@@ -25,7 +25,7 @@ public class FernflowerDebuggerSmokeTest {
         Process target = null;
         try {
             Path input = Files.createDirectory(root.resolve("input"));
-            Path output = root.resolve("output");
+            Path output = root.resolve("input-out");
             Path source = root.resolve("DebugTarget.java");
             Files.write(source, ("public class DebugTarget {"
                     + "public static void main(String[] args) { System.out.println(calculate(7)); }"
@@ -33,7 +33,7 @@ public class FernflowerDebuggerSmokeTest {
                     + "}").getBytes(StandardCharsets.UTF_8));
             require(ToolProvider.getSystemJavaCompiler().run(null, null, null,
                     "-g:none", "-d", input.toString(), source.toString()) == 0, "Fixture compilation failed");
-            Main.main(new String[]{"-i", input.toString(), "-o", output.toString(), "-d", "-c", "-m"});
+            Main.main(new String[]{"-i", input.toString(), "-d", "-c"});
             require(Files.exists(output.resolve("DebugTarget.class")), "No repaired class produced");
 
             Mapping decompiled = decompile(output.resolve("DebugTarget.class"));

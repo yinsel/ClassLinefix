@@ -38,14 +38,14 @@ class PackageFilterIntegrationTest {
     }
 
     private Main.CommandLineConfig config(Path input, Path output) {
-        return Main.parseCommandLine(new String[]{"-i", input.toString(), "-o", output.toString(),
+        return Main.parseCommandLine(new String[]{"-i", input.toString(),
                 "-w", "com.example", "-p", "com.example.internal"});
     }
 
     @Test
-    void directoryProcessingCopiesUnselectedClassesAndResourcesUnchanged() throws Exception {
+    void directoryProcessingPreservesUnselectedClassesAndResources() throws Exception {
         Path input = Files.createDirectory(temp.resolve("in"));
-        Path output = temp.resolve("out");
+        Path output = temp.resolve("in-out");
         Map<String, byte[]> files = fixtures();
         for (Map.Entry<String, byte[]> entry : files.entrySet()) {
             Path path = input.resolve(entry.getKey());
@@ -54,7 +54,14 @@ class PackageFilterIntegrationTest {
         }
         new PerfectLineRestorer(config(input, output)).process();
         for (Map.Entry<String, byte[]> entry : files.entrySet()) {
-            verify(entry.getKey(), entry.getValue(), Files.readAllBytes(output.resolve(entry.getKey())));
+            verify(entry.getKey(), entry.getValue(), Files.readAllBytes(input.resolve(entry.getKey())));
+            if ("renamed.class".equals(entry.getKey())) {
+                assertArrayEquals(entry.getValue(), Files.readAllBytes(temp.resolve("in-bak").resolve(entry.getKey())));
+                assertArrayEquals(Files.readAllBytes(input.resolve(entry.getKey())), Files.readAllBytes(output.resolve(entry.getKey())));
+            } else {
+                assertFalse(Files.exists(output.resolve(entry.getKey())));
+                assertFalse(Files.exists(temp.resolve("in-bak").resolve(entry.getKey())));
+            }
         }
     }
 
