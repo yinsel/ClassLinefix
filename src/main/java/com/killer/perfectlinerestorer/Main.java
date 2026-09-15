@@ -163,7 +163,7 @@ public class Main {
 
         options.addOption(Option.builder("m")
                 .longOpt("modified-only")
-                .desc("Only output files with modified CLASS bytecode; do not copy unchanged files or resources")
+                .desc("Only output files with modified CLASS bytecode; skip unchanged files and resources (no value required; default: off)")
                 .build());
 
         options.addOption(Option.builder("c")
@@ -196,7 +196,12 @@ public class Main {
             "java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar",
             "\nOptions:",
             options,
-            "\nExample: java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar -i ./input-jars -o ./output-jars\n",
+            "\nExamples:\n"
+                    + "  java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar -i ./input -o ./output\n"
+                    + "  java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar -i ./input -o ./output --modified-only\n"
+                    + "  java -jar " + PROGRAM_NAME + "-" + VERSION + ".jar -i ./input -o ./output -c -m -w com.api.doc\n"
+                    + "\n--modified-only (-m): output a complete JAR only when CLASS bytecode inside it changes.\n"
+                    + "Combined with --class-only (-c), omit all JARs. Existing skipped outputs are left untouched.\n",
             true
         );
     }
