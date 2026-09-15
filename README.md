@@ -23,6 +23,7 @@ java -jar ClassLinefix.jar -i <输入目录> -o <输出目录>
 ### 命令行选项
 ```
 usage: java -jar ClassLinefix.jar
+  -c,--class-only                只处理独立 CLASS 文件，JAR 原样复制（无需参数值）
   -h,--help                      显示帮助信息
   -i,--input <directory>         包含JAR和CLASS文件的输入目录
   -o,--output <directory>        处理后文件的输出目录
@@ -38,6 +39,19 @@ usage: java -jar ClassLinefix.jar
 # 处理所有文件
 java -jar ClassLinefix.jar -i ./input-jars -o ./output-jars
 ```
+
+#### 只处理 CLASS 文件，忽略 JAR
+```bash
+java -jar ClassLinefix.jar -i ./input -o ./output --class-only
+
+# 可与白名单和排除规则组合
+java -jar ClassLinefix.jar -i ./input -o ./output -c -w "com.api.doc" -p "com.api.doc.internal"
+```
+
+`-c` / `--class-only` 是无参数开关，默认关闭。启用后仅处理目录中的独立 `.class` 文件，
+所有 `.jar` 文件整包原样复制到输出位置，不读取内部 CLASS，也不清理签名或清单。
+直接以单个 JAR 为输入时同样只原样复制；已有输出 JAR 会被原始输入覆盖。
+白名单、排除规则和 `-s` 继续应用于独立 CLASS 文件，其他资源文件保持原有复制行为。
 
 #### 排除包含内部类的文件
 ```bash

@@ -96,7 +96,7 @@ public class PerfectLineRestorer {
         // Print summary
         logger.info("Processing completed in {} ms", duration);
         logger.info("Files processed: {}", processedFiles.get());
-        logger.info("Files skipped (already have line numbers): {}", skippedFiles.get());
+        logger.info("Files skipped (not modified): {}", skippedFiles.get());
         logger.info("Total bytes processed: {} bytes ({} MB)", 
                    totalBytes.get(), totalBytes.get() / (1024 * 1024));
     }
@@ -131,6 +131,19 @@ public class PerfectLineRestorer {
      * Process JAR file
      */
     private void processJarFile(Path inputJar, Path outputJar) throws IOException {
+        if (config.isClassOnly()) {
+            Path parent = outputJar.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            // Copy the archive itself: do not inspect entries or strip signatures.
+            Files.copy(inputJar, outputJar, StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.COPY_ATTRIBUTES);
+            skippedFiles.incrementAndGet();
+            logger.info("JAR copied unchanged (--class-only): {}", inputJar.getFileName());
+            return;
+        }
+
         logger.info("Processing JAR file: {}", inputJar.getFileName());
         
         JarProcessor processor = new JarProcessor(restorer);
