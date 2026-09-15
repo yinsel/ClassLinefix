@@ -38,6 +38,7 @@ class DebugInfoRestorerTest {
                 + "public static long wide(long number, double factor) { long result=number+(long)factor; return result; }"
                 + "public static int branch(boolean flag) { Object value; if(flag) value=\"one\"; else value=new StringBuilder(\"two\"); return value.toString().length(); }"
                 + "public int caught(boolean flag) { try { String value=\"x\"; if(flag) throw new IllegalArgumentException(); return value.length(); } catch(RuntimeException error) { return error.getClass().getName().length(); } }"
+                + "public static java.util.Map references(boolean flag) { java.util.Map value=new java.util.HashMap(); try { if(flag) throw new IllegalArgumentException(); value=new java.util.TreeMap(); } catch(RuntimeException failure) { value.put(\"error\",failure); } return value; }"
                 + "public static Object[] arrays(String[][] values) { Object[] sub=values[0]; return sub; }"
                 + "}";
         Path file = temp.resolve("Subject.java");
@@ -83,6 +84,29 @@ class DebugInfoRestorerTest {
         StringWriter diagnostics = new StringWriter();
         CheckClassAdapter.verify(new ClassReader(result), after.getClassLoader(), false, new PrintWriter(diagnostics));
         assertEquals("", diagnostics.toString());
+    }
+
+    @Test
+    void usesStatementBoundariesAndKeepsContinuousReferenceNamesStable() throws Exception {
+        ClassNode result = read(restorer().restoreLineNumbers(compile("-g:none", false)));
+        assertEquals(3, lines(method(result, "calculate")).size(),
+                "A load/multiply/store expression must share one synthetic line");
+        List<LocalVariableNode> locals = method(result, "references").localVariables.stream()
+                .filter(v -> v.index == 1).collect(Collectors.toList());
+        assertEquals(1, locals.size(), "One continuous reference slot must not acquire multiple debug names");
+        assertEquals("var1", locals.get(0).name);
+        assertEquals("Ljava/lang/Object;", locals.get(0).desc);
+    }
+
+    @Test
+    void rebuildingExistingLinesIsExplicitAndRepeatable() throws Exception {
+        byte[] original = compile("-g:source,lines", false);
+        LineNumberRestorer rebuild = new LineNumberRestorer(new Main.CommandLineConfig("in", "out", null, null,
+                false, false, false, false, true));
+        byte[] result = rebuild.restoreLineNumbers(original);
+        assertEquals(3, lines(method(read(result), "calculate")).size());
+        assertEquals(withoutDebug(original), withoutDebug(result));
+        assertArrayEquals(result, rebuild.restoreLineNumbers(result));
     }
 
     @Test

@@ -29,3 +29,9 @@ jobs:
       - name: Verify real JVM breakpoints, locals, and line stepping
         if: matrix.java == '17'
         run: java --add-modules jdk.jdi -cp target/ClassLinefix-*.jar src/test/debugger/DebuggerSmokeTest.java
+      - name: Verify automatic Fernflower mapping and real JVM line debugging
+        if: matrix.java == '17'
+        run: |
+          curl --fail --location --retry 3 --output target/fernflower-test.jar https://www.jetbrains.com/intellij-repository/releases/com/jetbrains/intellij/java/java-decompiler-engine/241.19416.15/java-decompiler-engine-241.19416.15.jar
+          echo 'e027383792fc5030c05e3c4a7c5729cdad6e2718f7a0961f7e515bb76343c493  target/fernflower-test.jar' | sha256sum --check
+          java --add-modules jdk.jdi -cp 'target/*' src/test/debugger/FernflowerDebuggerSmokeTest.java

@@ -18,6 +18,7 @@ public class LineNumberRestorer {
     
     private RestoreStrategy defaultStrategy = RestoreStrategy.HYBRID;
     private boolean debugInfo = false;
+    private boolean rebuildLines = false;
     private boolean skipInnerClasses = false; // Default value
     
     /**
@@ -34,6 +35,7 @@ public class LineNumberRestorer {
         if (config != null) {
             this.skipInnerClasses = config.isSkipInnerClasses();
             this.debugInfo = config.isDebugInfo();
+            this.rebuildLines = config.isRebuildLines();
         }
     }
     
@@ -114,7 +116,15 @@ public class LineNumberRestorer {
             
             // Detailed metadata repair must also run on classes that already have line numbers.
             if (debugInfo) {
-                if (!new DebugInfoRestorer().restore(classNode)) {
+                if (rebuildLines) {
+                    for (MethodNode method : classNode.methods) {
+                        for (AbstractInsnNode instruction : method.instructions.toArray()) {
+                            if (instruction instanceof LineNumberNode) method.instructions.remove(instruction);
+                        }
+                    }
+                    classNode.sourceDebug = null;
+                }
+                if (!new DebugInfoRestorer().restore(classNode) && !rebuildLines) {
                     return classBytes;
                 }
                 ClassWriter writer = new ClassWriter(0);

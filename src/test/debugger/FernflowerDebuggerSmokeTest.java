@@ -1,4 +1,9 @@
 import com.killer.perfectlinerestorer.Main;
+import org.jetbrains.java.decompiler.main.decompiler.BaseDecompiler;
+import org.jetbrains.java.decompiler.main.decompiler.PrintStreamLogger;
+import org.jetbrains.java.decompiler.main.extern.IResultSaver;
+import java.io.File;
+import java.util.jar.Manifest;
 import com.sun.jdi.*;
 import com.sun.jdi.connect.Connector;
 import com.sun.jdi.connect.LaunchingConnector;
@@ -12,8 +17,8 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
-/** Run with JDK 17: java --add-modules jdk.jdi -cp target/ClassLinefix-*.jar src/test/debugger/DebuggerSmokeTest.java */
-public class DebuggerSmokeTest {
+/** Tests standard CLASS metadata through the same Fernflower line-mapping API used by IDEA. */
+public class FernflowerDebuggerSmokeTest {
     public static void main(String[] args) throws Exception {
         Path root = Files.createTempDirectory("classlinefix-jdi-");
         VirtualMachine vm = null;
@@ -24,12 +29,16 @@ public class DebuggerSmokeTest {
             Path source = root.resolve("DebugTarget.java");
             Files.write(source, ("public class DebugTarget {"
                     + "public static void main(String[] args) { System.out.println(calculate(7)); }"
-                    + "static int calculate(int input) { int doubled=input*2; String text=\"value\"; return doubled+text.length(); }"
+                    + "static int calculate(int input) { int doubled=input*2; CharSequence text=\"value\"; if(input<0) text=new StringBuilder(\"other\"); return doubled+text.length(); }"
                     + "}").getBytes(StandardCharsets.UTF_8));
             require(ToolProvider.getSystemJavaCompiler().run(null, null, null,
                     "-g:none", "-d", input.toString(), source.toString()) == 0, "Fixture compilation failed");
             Main.main(new String[]{"-i", input.toString(), "-o", output.toString(), "-d", "-c", "-m"});
             require(Files.exists(output.resolve("DebugTarget.class")), "No repaired class produced");
+
+            Mapping decompiled = decompile(output.resolve("DebugTarget.class"));
+            int displayedFirst = decompiled.findLine("int var1 =");
+            int displayedInterior = decompiled.findLine("var2 = \"value\"");
 
             LaunchingConnector connector = Bootstrap.virtualMachineManager().defaultConnector();
             Map<String, Connector.Argument> arguments = connector.defaultArguments();
@@ -64,8 +73,8 @@ public class DebuggerSmokeTest {
                         require("DebugTarget.java".equals(type.sourceName()), "SourceFile missing");
                         Method method = type.methodsByName("calculate").get(0);
                         List<Location> locations = method.allLineLocations();
-                        firstLine = locations.get(0).lineNumber();
-                        interiorLine = locations.get(1).lineNumber();
+                        firstLine = decompiled.sourceToBytecode(displayedFirst);
+                        interiorLine = decompiled.sourceToBytecode(displayedInterior);
                         // Resolve explicit source line numbers; no MethodEntryRequest is used.
                         Location first = method.locationsOfLine(firstLine).get(0);
                         require(first.codeIndex() == 0, "First line is not the first executable instruction");
@@ -108,7 +117,9 @@ public class DebuggerSmokeTest {
                             step.request().disable();
                             continue;
                         }
-                        steppedLines.add(step.location().lineNumber());
+                        int displayedLine = decompiled.bytecodeToSource(step.location().lineNumber());
+                        require(displayedLine > 0, "Step stopped on a line with no decompiler mapping");
+                        steppedLines.add(displayedLine);
                         StackFrame frame = step.thread().frame(0);
                         for (LocalVariable local : frame.visibleVariables()) {
                             Value value = frame.getValue(local);
@@ -136,7 +147,7 @@ public class DebuggerSmokeTest {
             require(target.waitFor(5, TimeUnit.SECONDS) && target.exitValue() == 0, "Target did not exit successfully");
             String stdout = new String(target.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
             require(stdout.equals("19"), "Program result changed: " + stdout);
-            System.out.println("JDI PASS: first-line breakpoint=" + firstLine + " (bytecode offset 0), interior-line breakpoint="
+            System.out.println("FERNFLOWER/JDI PASS: displayed first line=" + displayedFirst + ", JVM line=" + firstLine + " (bytecode offset 0), interior-line breakpoint="
                     + interiorLine + ", arg0=7, var1=14, var2=value, "
                     + steppedLines.size() + " distinct line steps, program result=19");
         } finally {
@@ -148,6 +159,50 @@ public class DebuggerSmokeTest {
                 for (Path path : paths.sorted(Comparator.reverseOrder()).toArray(Path[]::new)) Files.deleteIfExists(path);
             }
         }
+    }
+
+    private static Mapping decompile(Path file) throws Exception {
+        Mapping result = new Mapping();
+        Map<String, Object> options = new HashMap<>();
+        options.put("bsm", "1");
+        options.put("udv", "1");
+        byte[] before = Files.readAllBytes(file);
+        BaseDecompiler engine = new BaseDecompiler((external, internal) -> Files.readAllBytes(Paths.get(external)),
+                result, options, new PrintStreamLogger(System.err));
+        engine.addSource(file.toFile());
+        engine.decompileContext();
+        require(result.mapping != null && result.source != null, "Fernflower did not recognize standard debug metadata");
+        require(Arrays.equals(before, Files.readAllBytes(file)), "Decompiler modified the CLASS under test");
+        return result;
+    }
+
+    private static final class Mapping implements IResultSaver {
+        String source;
+        int[] mapping;
+        int findLine(String text) {
+            String[] lines = source.split("\\n");
+            for (int i = 0; i < lines.length; i++) if (lines[i].contains(text)) return i + 1;
+            throw new AssertionError("Missing decompiled statement " + text + " in " + source);
+        }
+        // Same lookup semantics as IntelliJ LineNumbersMapping.ArrayBasedMapping.
+        int sourceToBytecode(int line) {
+            for (int i = 0; i < mapping.length; i += 2) if (mapping[i + 1] == line) return mapping[i];
+            return -1;
+        }
+        int bytecodeToSource(int line) {
+            for (int i = 0; i < mapping.length; i += 2) if (mapping[i] == line) return mapping[i + 1];
+            return -1;
+        }
+        public void saveClassFile(String path, String name, String entry, String content, int[] lines) {
+            source = content; mapping = lines;
+        }
+        public void saveFolder(String path) { }
+        public void copyFile(String source, String path, String entry) { }
+        public void createArchive(String path, String name, Manifest manifest) { }
+        public void saveDirEntry(String path, String name, String entry) { }
+        public void copyEntry(String source, String path, String name, String entry) { }
+        public void saveClassEntry(String path, String archive, String name, String entry, String content) { }
+        public void closeArchive(String path, String name) { }
     }
 
     private static void require(boolean condition, String message) {

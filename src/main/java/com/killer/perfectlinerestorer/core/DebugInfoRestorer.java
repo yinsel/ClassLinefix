@@ -34,9 +34,27 @@ final class DebugInfoRestorer {
                     || method.instructions.size() == 0) {
                 continue;
             }
-            // Infer locals before inserting any metadata nodes so frame indices remain stable.
+            // Collect statement boundaries before locals add labels and change frame indices.
+            Set<AbstractInsnNode> statementStarts = Collections.newSetFromMap(new IdentityHashMap<>());
+            for (AbstractInsnNode instruction : method.instructions) {
+                if (instruction.getOpcode() >= 0) { statementStarts.add(instruction); break; }
+            }
             try {
-                modified |= restoreLocals(owner.name, method);
+                Frame<BasicValue>[] frames = analyze(owner.name, method);
+                for (int i = 0; i < method.instructions.size(); i++) {
+                    AbstractInsnNode instruction = method.instructions.get(i);
+                    int opcode = instruction.getOpcode();
+                    if (opcode >= 0 && opcode != Opcodes.GOTO && opcode != Opcodes.NOP
+                            && frames[i] != null && frames[i].getStackSize() == 0) {
+                        statementStarts.add(instruction);
+                    }
+                }
+                for (TryCatchBlockNode block : method.tryCatchBlocks) {
+                    AbstractInsnNode handler = block.handler;
+                    while (handler != null && handler.getOpcode() < 0) handler = handler.getNext();
+                    if (handler != null) statementStarts.add(handler);
+                }
+                modified |= restoreLocals(owner.name, method, frames);
             } catch (AnalyzerException | RuntimeException e) {
                 logger.warn("Cannot infer locals for {}.{}{}; retaining existing locals: {}",
                         owner.name, method.name, method.desc, e.getMessage());
@@ -47,7 +65,7 @@ final class DebugInfoRestorer {
             }
             if (!hasLines) {
                 for (AbstractInsnNode instruction : method.instructions.toArray()) {
-                    if (instruction.getOpcode() >= 0 && nextLine <= 65535) {
+                    if (statementStarts.contains(instruction) && nextLine <= 65535) {
                         LabelNode label = boundary(method, instruction);
                         method.instructions.insert(label, new LineNumberNode(nextLine++, label));
                         modified = true;
@@ -58,7 +76,7 @@ final class DebugInfoRestorer {
         return modified;
     }
 
-    private boolean restoreLocals(String owner, MethodNode method) throws AnalyzerException {
+    private Frame<BasicValue>[] analyze(String owner, MethodNode method) throws AnalyzerException {
         Map<Integer, boolean[]> frameMasks = frameMasks(owner, method);
         DebugInterpreter interpreter = new DebugInterpreter("<init>".equals(method.name));
         Analyzer<BasicValue> analyzer = new Analyzer<BasicValue>(interpreter) {
@@ -84,7 +102,10 @@ final class DebugInfoRestorer {
                 return new DebugFrame(frame);
             }
         };
-        Frame<BasicValue>[] frames = analyzer.analyze(owner, method);
+        return analyzer.analyze(owner, method);
+    }
+
+    private boolean restoreLocals(String owner, MethodNode method, Frame<BasicValue>[] frames) {
         AbstractInsnNode[] instructions = method.instructions.toArray();
         List<Integer> executable = new ArrayList<>();
         Map<AbstractInsnNode, Integer> indices = new IdentityHashMap<>();
@@ -129,6 +150,14 @@ final class DebugInfoRestorer {
                     if (frame != null && !covered(existing, indices, index, instructionIndex)) {
                         descriptor = descriptor(frame.getLocal(index));
                     }
+                }
+                // A continuously live reference slot is one synthetic variable, even when
+                // inference changes HashMap -> Map -> Object across assignments/joins.
+                // Splitting on those types makes decompilers pick a later name for the
+                // whole variable, which is then unavailable at earlier breakpoints.
+                if (isReferenceDescriptor(current) && isReferenceDescriptor(descriptor)) {
+                    if (!current.equals(descriptor)) current = "Ljava/lang/Object;";
+                    continue;
                 }
                 if (!Objects.equals(current, descriptor)) {
                     if (current != null) {
@@ -226,6 +255,10 @@ final class DebugInfoRestorer {
             }
         }
         return false;
+    }
+
+    private boolean isReferenceDescriptor(String descriptor) {
+        return descriptor != null && (descriptor.startsWith("L") || descriptor.startsWith("["));
     }
 
     private String descriptor(BasicValue value) {

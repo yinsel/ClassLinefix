@@ -23,6 +23,7 @@ java -jar ClassLinefix.jar -i <输入目录> -o <输出目录>
 ### 命令行选项
 ```
 usage: java -jar ClassLinefix.jar
+     --rebuild-lines             显式重建已有行号为合成语句行号（隐含 -d）
   -d,--debug-info                补充源码名、缺失行号、参数和局部变量表（默认关闭）
   -m,--modified-only             只输出实际修改过的文件，不复制未修改文件和资源
   -c,--class-only                只处理独立 CLASS 文件，JAR 原样复制（无需参数值）
@@ -53,17 +54,29 @@ java -jar ClassLinefix.jar -i ./input -o ./output -d -c -m -w "com.api.doc"
 
 `-d` / `--debug-info` 是无参数开关，默认关闭。启用后：
 
-- 保留已有 `SourceFile` 和各方法的行号；为缺少行号的方法在可执行指令位置添加合成行号，包含构造方法、静态初始化方法和简单方法。
+- 保留已有 `SourceFile` 和各方法的行号；为缺少行号的方法根据操作数栈状态划分语句边界并添加合成行号，包含构造方法、静态初始化方法和简单方法。
 - 已有行号不会阻止补充缺失的 `LocalVariableTable`；保留已有变量项，只补充未覆盖范围。重复运行不会反复改写已补全的文件。
-- 根据方法描述符和字节码数据流补充 `this`、参数及局部变量的类型、槽位、可见范围。优先使用已有 `MethodParameters` 名称，否则使用 `arg0`、`var3` 等合成名称；同槽位的不同类型/有效区间分开表示。
+- 根据方法描述符和字节码数据流补充 `this`、参数及局部变量的类型、槽位、可见范围。优先使用已有 `MethodParameters` 名称，否则使用 `arg0`、`var3` 等合成名称；同槽位连续有效的引用保持一个名称（不同引用类型合并为 `Object`），失效或变为非引用类型时才拆分有效区间。
 - 处理 `long`/`double` 的双槽布局、分支、异常路径和对象初始化状态；尚未初始化、无法确定类型或不可达位置不生成变量项。引用类型合并不依赖应用类路径，无法确定共同具体类型时退化为 `Object`。
 - 保留可执行指令和现有栈映射，不重新编译业务代码。元数据发生变化也算“已修改”，可与 `--modified-only` 合用；`-w`、`-p`、`-s` 和 `--class-only` 继续生效。
 
-**调试步骤**：让目标 JVM 实际加载输出的 CLASS/JAR，开启 JDWP，再用 IDEA 连接。IDEA 的依赖或反编译视图也必须对应处理后的字节码。使用行断点和单步时，可以按合成名称查看可见参数和局部变量。
+**IDEA 自动反编译调试**：让目标 JVM 实际加载输出的 CLASS/JAR，并让 IDEA 打开同一份字节码。工具只写标准 `SourceFile`、`LineNumberTable` 和 `LocalVariableTable`；无需运行反编译器，不生成或绑定特定排版的 Java 源文件。由 IDEA 的反编译器自行生成显示行到 CLASS 行号的映射。
 
-**边界**：此模式补充可供调试器使用的元数据，不能找回已丢失的原始变量名、原始源码行号、泛型局部变量签名或精确的源码词法作用域。反编译器显示的变量名可能不同，光标与反编译 Java 的逐行对应仍取决于反编译器的行号映射；普通反编译源码不能随意当作匹配源码。分析失败的方法会保留原有变量表并记录警告，不保证所有混淆字节码均能完整推断。
+如果输入已带有旧工具逐指令生成的行号，可以显式重建：
 
-CI 在 Java 8/17 上验证字节码及运行结果，并在 Java 17 上通过真实 JDI 连接验证行断点、参数/局部变量读取和 `STEP_LINE` 单步事件。
+```bash
+java -jar ClassLinefix.jar -i ./input -o ./output -c -m --rebuild-lines
+```
+
+`--rebuild-lines` 隐含 `--debug-info`，替换已有行号并清除旧 SMAP；已有局部变量表仍保留。建议从原始文件重新处理，避免沿用旧版已拆分的合成变量表。未指定该选项时保留已有行号。
+
+例如 `new HashMap()` 的 NEW/DUP/构造调用/ASTORE 现在共享同一合成行，反编译器不再只能把第一条赋值语句映射到末尾的 ASTORE。连续存活的槽位 3 在推断类型从 `HashMap` 变成 `Map`/`Object` 时保持 `var3`，不会变成 `var3_1`、`var3_2`、`var3_3`。
+
+如果 IDEA 行断点仍不对应：确认远程 JVM 已加载新 CLASS、IDEA 库中没有旧副本或不匹配的附加源码，并确认 Registry 中 `decompiler.use.line.mapping` 已开启，随后重新打开 CLASS。这个开关控制 IDEA 是否启用反编译行号映射；见 [IDEA 反编译插件实现](https://github.com/JetBrains/intellij-community/blob/master/plugins/java-decompiler/plugin/src/org/jetbrains/java/decompiler/IdeaDecompiler.kt)。不同 IDEA 版本界面可能不同。
+
+**边界**：合成调试信息不能恢复原始变量名、原始源码行号、泛型局部变量签名或精确的源码词法作用域。变量赋值后才可读。反编译器仍可能产生没有真实局部变量槽的临时名，例如 catch 中额外生成的 `var9`；不能保证任意反编译器生成的每一个名字都有同名 JVM 变量。应在 Variables 面板按 LVT 中的实际名称查看（例如 `var4_1`）。分析失败的方法会保留原有变量表并记录警告，不保证所有混淆字节码均能完整推断。
+
+CI 在 Java 8/17 上验证字节码及运行结果；Java 17 还使用真实 JDI 验证行断点、变量读取和单步，并让 IDEA 的 Fernflower 引擎直接反编译输出 CLASS，通过其自动映射设置第一行断点（BCI 0）及内部行断点。这是反编译引擎与 JVM 的集成验证，不等同于 IDEA GUI 验证。Fernflower 仅是测试依赖，不包含在工具运行时中。
 
 #### 只输出实际处理并修改的文件
 ```bash
