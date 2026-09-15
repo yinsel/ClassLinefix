@@ -60,7 +60,7 @@ public class PerfectLineRestorer {
                 Path relativePath = inputPath.relativize(dir);
                 Path outputDir = outputPath.resolve(relativePath);
                 
-                if (!Files.exists(outputDir)) {
+                if (!config.isModifiedOnly() && !Files.exists(outputDir)) {
                     Files.createDirectories(outputDir);
                     logger.debug("Created directory: {}", outputDir);
                 }
@@ -110,14 +110,16 @@ public class PerfectLineRestorer {
             Path relativePath = inputRoot.relativize(file);
             Path outputFile = outputRoot.resolve(relativePath);
             
-            // Ensure output directory exists
-            Files.createDirectories(outputFile.getParent());
+            // In modified-only mode, create directories only when publishing a changed file.
+            if (!config.isModifiedOnly()) {
+                Files.createDirectories(outputFile.getParent());
+            }
             
             if (fileName.endsWith(".jar")) {
                 processJarFile(file, outputFile);
             } else if (fileName.endsWith(".class")) {
                 processClassFile(file, outputFile);
-            } else {
+            } else if (!config.isModifiedOnly()) {
                 // Copy other files as-is
                 copyFile(file, outputFile);
             }
@@ -132,6 +134,11 @@ public class PerfectLineRestorer {
      */
     private void processJarFile(Path inputJar, Path outputJar) throws IOException {
         if (config.isClassOnly()) {
+            if (config.isModifiedOnly()) {
+                skippedFiles.incrementAndGet();
+                logger.info("JAR skipped (--class-only --modified-only): {}", inputJar.getFileName());
+                return;
+            }
             Path parent = outputJar.getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
@@ -147,7 +154,7 @@ public class PerfectLineRestorer {
         logger.info("Processing JAR file: {}", inputJar.getFileName());
         
         JarProcessor processor = new JarProcessor(restorer);
-        boolean modified = processor.processJar(inputJar, outputJar, config);
+        boolean modified = writeProcessedFile(outputJar, target -> processor.processJar(inputJar, target, config));
         
         if (modified) {
             processedFiles.incrementAndGet();
@@ -166,7 +173,7 @@ public class PerfectLineRestorer {
         logger.debug("Processing CLASS file: {}", inputClass.getFileName());
         
         ClassProcessor processor = new ClassProcessor(restorer);
-        boolean modified = processor.processClass(inputClass, outputClass, config);
+        boolean modified = writeProcessedFile(outputClass, target -> processor.processClass(inputClass, target, config));
         
         if (modified) {
             processedFiles.incrementAndGet();
@@ -174,10 +181,39 @@ public class PerfectLineRestorer {
             logger.debug("CLASS file processed: {} -> {}", inputClass.getFileName(), outputClass.getFileName());
         } else {
             skippedFiles.incrementAndGet();
-            logger.debug("CLASS file skipped (already has line numbers): {}", inputClass.getFileName());
+            logger.debug("CLASS file skipped (not modified): {}", inputClass.getFileName());
         }
     }
     
+    /**
+     * Process into a temporary file when unchanged outputs should be omitted.
+     * Never overwrite or delete an existing destination for a skipped/failed input.
+     */
+    private boolean writeProcessedFile(Path output, ProcessingOperation operation) throws IOException {
+        if (!config.isModifiedOnly()) {
+            return operation.process(output);
+        }
+        Path temporary = Files.createTempFile("classlinefix-", ".tmp");
+        try {
+            boolean modified = operation.process(temporary);
+            if (modified) {
+                Path parent = output.getParent();
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
+                Files.move(temporary, output, StandardCopyOption.REPLACE_EXISTING);
+            }
+            return modified;
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ProcessingOperation {
+        boolean process(Path output) throws IOException;
+    }
+
     /**
      * Copy non-Java files as-is
      */

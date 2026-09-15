@@ -23,6 +23,7 @@ java -jar ClassLinefix.jar -i <输入目录> -o <输出目录>
 ### 命令行选项
 ```
 usage: java -jar ClassLinefix.jar
+  -m,--modified-only             只输出实际修改过的文件，不复制未修改文件和资源
   -c,--class-only                只处理独立 CLASS 文件，JAR 原样复制（无需参数值）
   -h,--help                      显示帮助信息
   -i,--input <directory>         包含JAR和CLASS文件的输入目录
@@ -39,6 +40,23 @@ usage: java -jar ClassLinefix.jar
 # 处理所有文件
 java -jar ClassLinefix.jar -i ./input-jars -o ./output-jars
 ```
+
+#### 只输出实际处理并修改的文件
+```bash
+java -jar ClassLinefix.jar -i ./input -o ./output --modified-only
+
+# 只输出白名单中实际修改过的独立 CLASS，不输出 JAR 或普通资源
+java -jar ClassLinefix.jar -i ./input -o ./output -c -m -w "com.api.doc"
+```
+
+`-m` / `--modified-only` 是无参数开关，默认关闭。不传时保持原来的复制行为。
+启用后只输出字节码实际修改成功的 CLASS；被白名单/排除规则/内部类规则跳过、
+已有行号、无需修改或处理失败后保留原始字节的 CLASS 均不输出，普通资源也不复制。
+JAR 只有内部至少一个 CLASS 实际修改后才输出**完整 JAR**，包内未修改的类和资源仍然保留，
+签名处理遵循原有逻辑；仅签名/清单清理不算 CLASS 修改。直接输入单个 JAR 时规则相同。
+与 `--class-only` 合用时 JAR 完全不输出。
+输出文件保持相对目录结构；本选项不会删除或覆盖被跳过文件对应的已有输出，
+如需输出目录仅包含本次修改结果，请使用新的空目录。
 
 #### 只处理 CLASS 文件，忽略 JAR
 ```bash
