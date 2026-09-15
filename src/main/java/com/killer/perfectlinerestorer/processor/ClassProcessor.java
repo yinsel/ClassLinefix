@@ -147,6 +147,12 @@ public class ClassProcessor implements FileProcessor {
         }
     }
     
+    /** Check package filters without creating a backup or output file. */
+    public boolean passesPackageFilters(Path inputClass,
+            com.killer.perfectlinerestorer.Main.CommandLineConfig config) throws IOException {
+        return config == null || !shouldExcludeClass(Files.readAllBytes(inputClass), config);
+    }
+
     /**
      * Check if a class should be excluded from line number processing
      * based on its package name

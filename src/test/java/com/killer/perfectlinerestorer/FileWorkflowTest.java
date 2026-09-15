@@ -74,6 +74,7 @@ class FileWorkflowTest {
         assertEquals(!alreadyLined, Files.exists(backup));
         if (alreadyLined) {
             assertArrayEquals(original, Files.readAllBytes(input));
+            assertFalse(Files.exists(temp.resolve("in-bak/lib")));
         } else {
             assertArrayEquals(original, Files.readAllBytes(backup));
             assertArrayEquals(Files.readAllBytes(input), Files.readAllBytes(output));
@@ -82,6 +83,57 @@ class FileWorkflowTest {
                 assertArrayEquals(classBytes("com/example/internal/Excluded", false), readEntry(jar, "Excluded.class"));
                 assertArrayEquals(new byte[]{7, 8, 9}, readEntry(jar, "resource.txt"));
             }
+        }
+    }
+
+    @Test
+    void packageFilteredClassesLeaveNoBackupDirectories() throws Exception {
+        Path root = Files.createDirectory(temp.resolve("in"));
+        // Paths intentionally disagree with bytecode names: selection must use the latter.
+        Path outside = Files.createDirectories(root.resolve("com/example/deep")).resolve("Outside.class");
+        Path excluded = Files.createDirectories(root.resolve("blocked/deep")).resolve("Excluded.class");
+        Path selected = Files.createDirectories(root.resolve("unrelated/deep")).resolve("Selected.class");
+        byte[] outsideBytes = classBytes("org/other/Outside", false);
+        byte[] excludedBytes = classBytes("com/example/internal/Excluded", false);
+        byte[] selectedBytes = classBytes("com/example/Selected", false);
+        Files.write(outside, outsideBytes);
+        Files.write(excluded, excludedBytes);
+        Files.write(selected, selectedBytes);
+        new PerfectLineRestorer(Main.parseCommandLine(new String[]{"-i", root.toString(),
+                "-w", "com.example", "-p", "com.example.internal"})).process();
+        for (String suffix : Arrays.asList("-bak", "-out")) {
+            Path result = temp.resolve("in" + suffix);
+            assertFalse(Files.exists(result.resolve("com")));
+            assertFalse(Files.exists(result.resolve("blocked")));
+            assertTrue(Files.exists(result.resolve("unrelated/deep/Selected.class")));
+        }
+        assertArrayEquals(outsideBytes, Files.readAllBytes(outside));
+        assertArrayEquals(excludedBytes, Files.readAllBytes(excluded));
+        assertArrayEquals(selectedBytes, Files.readAllBytes(temp.resolve("in-bak/unrelated/deep/Selected.class")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void skippedClassesPruneEmptyParentsButKeepOtherBackups(boolean keepChangedFile) throws Exception {
+        Path root = Files.createDirectory(temp.resolve("in"));
+        Path nested = Files.createDirectories(root.resolve("shared/deep/unchanged"));
+        Files.write(nested.resolve("Lined.class"), classBytes("com/example/Lined", true));
+        Files.write(nested.resolve("Inner.class"), classBytes("com/example/Outer$Inner", false));
+        byte[] original = classBytes("com/example/Selected", false);
+        if (keepChangedFile) {
+            Files.write(root.resolve("shared/Selected.class"), original);
+        }
+        new PerfectLineRestorer(Main.parseCommandLine(new String[]{"-i", root.toString(),
+                "-w", "com.example", "-s", "true"})).process();
+        Path backup = temp.resolve("in-bak");
+        assertTrue(Files.isDirectory(backup));
+        assertTrue(Files.isDirectory(temp.resolve("in-out")));
+        assertFalse(Files.exists(backup.resolve("shared/deep")));
+        assertEquals(keepChangedFile, Files.exists(backup.resolve("shared")));
+        if (keepChangedFile) {
+            assertArrayEquals(original, Files.readAllBytes(backup.resolve("shared/Selected.class")));
+            assertArrayEquals(Files.readAllBytes(root.resolve("shared/Selected.class")),
+                    Files.readAllBytes(temp.resolve("in-out/shared/Selected.class")));
         }
     }
 

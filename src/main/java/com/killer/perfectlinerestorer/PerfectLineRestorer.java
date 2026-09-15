@@ -48,7 +48,7 @@ public class PerfectLineRestorer {
                     // Do not overwrite targets outside the input tree through symbolic links.
                     if (attrs.isRegularFile() && isCandidate(file)) {
                         Path relative = input.relativize(file);
-                        processDirectoryFile(file, backup.resolve(relative), output.resolve(relative));
+                        processDirectoryFile(file, backup.resolve(relative), output.resolve(relative), backup);
                     }
                     return FileVisitResult.CONTINUE;
                 }
@@ -82,7 +82,13 @@ public class PerfectLineRestorer {
         return new ClassProcessor(restorer).processClass(input, output, config);
     }
 
-    private void processDirectoryFile(Path input, Path backup, Path output) throws IOException {
+    private void processDirectoryFile(Path input, Path backup, Path output, Path backupRoot) throws IOException {
+        // Match the class name in the bytecode, not its filesystem path.
+        if (!isJar(input) && !new ClassProcessor(restorer).passesPackageFilters(input, config)) {
+            skippedFiles++;
+            logger.debug("CLASS skipped before backup (package filters): {}", input);
+            return;
+        }
         Files.createDirectories(backup.getParent());
         // Snapshot original bytes and attributes before invoking any processor.
         Files.copy(input, backup, StandardCopyOption.COPY_ATTRIBUTES);
@@ -90,6 +96,7 @@ public class PerfectLineRestorer {
         try {
             if (!transform(backup, temporary)) {
                 Files.delete(backup);
+                removeEmptyBackupDirectories(backup.getParent(), backupRoot);
                 skippedFiles++;
                 return;
             }
@@ -102,6 +109,18 @@ public class PerfectLineRestorer {
             logger.info("Backed up and processed: {}", input);
         } finally {
             Files.deleteIfExists(temporary);
+        }
+    }
+
+    private void removeEmptyBackupDirectories(Path directory, Path backupRoot) throws IOException {
+        // Retain the run's root and stop at any directory containing another backup.
+        while (!directory.equals(backupRoot) && directory.startsWith(backupRoot)) {
+            try {
+                Files.delete(directory);
+            } catch (DirectoryNotEmptyException e) {
+                return;
+            }
+            directory = directory.getParent();
         }
     }
 
