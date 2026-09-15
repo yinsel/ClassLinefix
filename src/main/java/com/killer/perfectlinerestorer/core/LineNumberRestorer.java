@@ -17,6 +17,7 @@ public class LineNumberRestorer {
     private static final Logger logger = LoggerFactory.getLogger(LineNumberRestorer.class);
     
     private RestoreStrategy defaultStrategy = RestoreStrategy.HYBRID;
+    private boolean debugInfo = false;
     private boolean skipInnerClasses = false; // Default value
     
     /**
@@ -32,9 +33,14 @@ public class LineNumberRestorer {
     public LineNumberRestorer(com.killer.perfectlinerestorer.Main.CommandLineConfig config) {
         if (config != null) {
             this.skipInnerClasses = config.isSkipInnerClasses();
+            this.debugInfo = config.isDebugInfo();
         }
     }
     
+    public boolean isDebugInfoEnabled() {
+        return debugInfo;
+    }
+
     /**
      * Check if a class already has line number information
      */
@@ -89,7 +95,7 @@ public class LineNumberRestorer {
             reader.accept(classNode, 0);
             
             // Skip enum classes
-            if ((classNode.access & Opcodes.ACC_ENUM) != 0) {
+            if (!debugInfo && (classNode.access & Opcodes.ACC_ENUM) != 0) {
                 logger.debug("Class {} is an enum, skipping line number restoration", classNode.name);
                 return classBytes;
             }
@@ -106,6 +112,16 @@ public class LineNumberRestorer {
                 return classBytes;
             }
             
+            // Detailed metadata repair must also run on classes that already have line numbers.
+            if (debugInfo) {
+                if (!new DebugInfoRestorer().restore(classNode)) {
+                    return classBytes;
+                }
+                ClassWriter writer = new ClassWriter(0);
+                classNode.accept(writer);
+                return writer.toByteArray();
+            }
+
             // Skip if already has line numbers
             if (hasLineNumbers(classNode)) {
                 logger.debug("Class {} already has line numbers, skipping", classNode.name);

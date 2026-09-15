@@ -97,7 +97,7 @@ public class Main {
             }
             
             return new CommandLineConfig(inputDir, outputDir, excludePackages, whitelistPackages,
-                    skipInnerClasses, cmd.hasOption("class-only"), cmd.hasOption("modified-only"));
+                    skipInnerClasses, cmd.hasOption("class-only"), cmd.hasOption("modified-only"), cmd.hasOption("debug-info"));
             
         } catch (ParseException e) {
             System.err.println("Error parsing command line: " + e.getMessage());
@@ -159,6 +159,11 @@ public class Main {
                 .hasArg()
                 .argName("package1,package2,...")
                 .desc("Only process matching packages or full class names (same matching rules as -p; exclusions take precedence)")
+                .build());
+
+        options.addOption(Option.builder("d")
+                .longOpt("debug-info")
+                .desc("Fill missing source/line/local-variable debug metadata; use synthetic variable names (default: off)")
                 .build());
 
         options.addOption(Option.builder("m")
@@ -288,6 +293,7 @@ public class Main {
         private final boolean skipInnerClasses;
         private final boolean classOnly;
         private final boolean modifiedOnly;
+        private final boolean debugInfo;
         
         public CommandLineConfig(String inputDir, String outputDir) {
             this(inputDir, outputDir, new HashSet<>(), false);
@@ -314,6 +320,12 @@ public class Main {
         public CommandLineConfig(String inputDir, String outputDir, Set<String> excludePackages,
                                  Set<String> whitelistPackages, boolean skipInnerClasses, boolean classOnly,
                                  boolean modifiedOnly) {
+            this(inputDir, outputDir, excludePackages, whitelistPackages, skipInnerClasses, classOnly, modifiedOnly, false);
+        }
+
+        public CommandLineConfig(String inputDir, String outputDir, Set<String> excludePackages,
+                                 Set<String> whitelistPackages, boolean skipInnerClasses, boolean classOnly,
+                                 boolean modifiedOnly, boolean debugInfo) {
             this.inputDir = inputDir;
             this.outputDir = outputDir;
             this.excludePackages = excludePackages != null ? new HashSet<>(excludePackages) : new HashSet<>();
@@ -321,6 +333,7 @@ public class Main {
             this.skipInnerClasses = skipInnerClasses;
             this.classOnly = classOnly;
             this.modifiedOnly = modifiedOnly;
+            this.debugInfo = debugInfo;
         }
         
         public String getInputDir() {
@@ -345,6 +358,10 @@ public class Main {
 
         public boolean isModifiedOnly() {
             return modifiedOnly;
+        }
+
+        public boolean isDebugInfo() {
+            return debugInfo;
         }
 
         public Set<String> getWhitelistPackages() {
@@ -399,8 +416,8 @@ public class Main {
         
         @Override
         public String toString() {
-            return String.format("CommandLineConfig{inputDir='%s', outputDir='%s', excludePackages=%s, whitelistPackages=%s, skipInnerClasses=%s, classOnly=%s, modifiedOnly=%s}",
-                    inputDir, outputDir, excludePackages, whitelistPackages, skipInnerClasses, classOnly, modifiedOnly);
+            return String.format("CommandLineConfig{inputDir='%s', outputDir='%s', excludePackages=%s, whitelistPackages=%s, skipInnerClasses=%s, classOnly=%s, modifiedOnly=%s, debugInfo=%s}",
+                    inputDir, outputDir, excludePackages, whitelistPackages, skipInnerClasses, classOnly, modifiedOnly, debugInfo);
         }
     }
 }

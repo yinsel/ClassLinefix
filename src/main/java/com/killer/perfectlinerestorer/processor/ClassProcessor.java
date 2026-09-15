@@ -82,7 +82,7 @@ public class ClassProcessor implements FileProcessor {
             }
             
             // Check if the class already has line numbers
-            if (restorer.hasLineNumbers(originalBytes)) {
+            if (!restorer.isDebugInfoEnabled() && restorer.hasLineNumbers(originalBytes)) {
                 logger.debug("Class {} already has line numbers, copying as-is", inputClass.getFileName());
                 
                 // Ensure output directory exists

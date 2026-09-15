@@ -23,6 +23,7 @@ java -jar ClassLinefix.jar -i <输入目录> -o <输出目录>
 ### 命令行选项
 ```
 usage: java -jar ClassLinefix.jar
+  -d,--debug-info                补充源码名、缺失行号、参数和局部变量表（默认关闭）
   -m,--modified-only             只输出实际修改过的文件，不复制未修改文件和资源
   -c,--class-only                只处理独立 CLASS 文件，JAR 原样复制（无需参数值）
   -h,--help                      显示帮助信息
@@ -41,6 +42,29 @@ usage: java -jar ClassLinefix.jar
 java -jar ClassLinefix.jar -i ./input-jars -o ./output-jars
 ```
 
+#### 补充详细调试信息
+```bash
+# 补充缺失的调试元数据，可与已有过滤和输出选项组合
+java -jar ClassLinefix.jar -i ./input -o ./output --debug-info
+
+# 只输出 com.api.doc 中补充过调试信息的独立 CLASS
+java -jar ClassLinefix.jar -i ./input -o ./output -d -c -m -w "com.api.doc"
+```
+
+`-d` / `--debug-info` 是无参数开关，默认关闭。启用后：
+
+- 保留已有 `SourceFile` 和各方法的行号；为缺少行号的方法在可执行指令位置添加合成行号，包含构造方法、静态初始化方法和简单方法。
+- 已有行号不会阻止补充缺失的 `LocalVariableTable`；保留已有变量项，只补充未覆盖范围。重复运行不会反复改写已补全的文件。
+- 根据方法描述符和字节码数据流补充 `this`、参数及局部变量的类型、槽位、可见范围。优先使用已有 `MethodParameters` 名称，否则使用 `arg0`、`var3` 等合成名称；同槽位的不同类型/有效区间分开表示。
+- 处理 `long`/`double` 的双槽布局、分支、异常路径和对象初始化状态；尚未初始化、无法确定类型或不可达位置不生成变量项。引用类型合并不依赖应用类路径，无法确定共同具体类型时退化为 `Object`。
+- 保留可执行指令和现有栈映射，不重新编译业务代码。元数据发生变化也算“已修改”，可与 `--modified-only` 合用；`-w`、`-p`、`-s` 和 `--class-only` 继续生效。
+
+**调试步骤**：让目标 JVM 实际加载输出的 CLASS/JAR，开启 JDWP，再用 IDEA 连接。IDEA 的依赖或反编译视图也必须对应处理后的字节码。使用行断点和单步时，可以按合成名称查看可见参数和局部变量。
+
+**边界**：此模式补充可供调试器使用的元数据，不能找回已丢失的原始变量名、原始源码行号、泛型局部变量签名或精确的源码词法作用域。反编译器显示的变量名可能不同，光标与反编译 Java 的逐行对应仍取决于反编译器的行号映射；普通反编译源码不能随意当作匹配源码。分析失败的方法会保留原有变量表并记录警告，不保证所有混淆字节码均能完整推断。
+
+CI 在 Java 8/17 上验证字节码及运行结果，并在 Java 17 上通过真实 JDI 连接验证行断点、参数/局部变量读取和 `STEP_LINE` 单步事件。
+
 #### 只输出实际处理并修改的文件
 ```bash
 java -jar ClassLinefix.jar -i ./input -o ./output --modified-only
@@ -51,7 +75,8 @@ java -jar ClassLinefix.jar -i ./input -o ./output -c -m -w "com.api.doc"
 
 `-m` / `--modified-only` 是无参数开关，默认关闭。不传时保持原来的复制行为。
 启用后只输出字节码实际修改成功的 CLASS；被白名单/排除规则/内部类规则跳过、
-已有行号、无需修改或处理失败后保留原始字节的 CLASS 均不输出，普通资源也不复制。
+无需修改或处理失败后保留原始字节的 CLASS 均不输出，普通资源也不复制。
+默认模式下已有行号的 CLASS 会跳过；启用 `--debug-info` 后，如补充了局部变量等元数据则仍会输出。
 JAR 只有内部至少一个 CLASS 实际修改后才输出**完整 JAR**，包内未修改的类和资源仍然保留，
 签名处理遵循原有逻辑；仅签名/清单清理不算 CLASS 修改。直接输入单个 JAR 时规则相同。
 与 `--class-only` 合用时 JAR 完全不输出。

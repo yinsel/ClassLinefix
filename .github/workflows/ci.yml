@@ -26,3 +26,6 @@ jobs:
         run: mvn --batch-mode --no-transfer-progress clean verify
       - name: Smoke test executable JAR
         run: java -jar target/ClassLinefix-*.jar --help
+      - name: Verify real JVM breakpoints, locals, and line stepping
+        if: matrix.java == '17'
+        run: java --add-modules jdk.jdi -cp target/ClassLinefix-*.jar src/test/debugger/DebuggerSmokeTest.java
